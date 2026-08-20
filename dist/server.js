@@ -14599,17 +14599,25 @@ async function plugin(bb) {
       description: "strict: only exact matches. normal: exact + common patterns. permissive: also flag borderline cases."
     }
   });
-  const { customNoise, threshold } = await settings.get();
-  const customExact = /* @__PURE__ */ new Set();
-  if (customNoise) {
-    for (const line of customNoise.split("\n")) {
-      const trimmed = line.trim().toLowerCase();
-      if (trimmed && !trimmed.startsWith("#")) {
-        EXACT_NOISE.add(trimmed);
-        customExact.add(trimmed);
+  let { customNoise, threshold } = await settings.get();
+  let customExact = /* @__PURE__ */ new Set();
+  function parseCustomNoise() {
+    const next = /* @__PURE__ */ new Set();
+    if (customNoise) {
+      for (const line of customNoise.split("\n")) {
+        const trimmed = line.trim().toLowerCase();
+        if (trimmed && !trimmed.startsWith("#")) next.add(trimmed);
       }
     }
+    customExact = next;
   }
+  parseCustomNoise();
+  settings.onChange((next) => {
+    customNoise = next.customNoise;
+    threshold = next.threshold;
+    parseCustomNoise();
+    bb.log.info(`[noisegate] settings updated (threshold: ${threshold})`);
+  });
   bb.agents.registerTool({
     name: "noisegate_suppress",
     description: 'Check if text is low-signal noise and should be suppressed. Returns the original text if it passes, or "(suppressed)" if it matches known noise patterns. Call this on short acknowledgements and confirmations before sending.',
@@ -14620,7 +14628,7 @@ async function plugin(bb) {
       if (!text) return "(suppressed)";
       const trimmed = text.trim();
       const lower = trimmed.toLowerCase();
-      if (EXACT_NOISE.has(lower)) return "(suppressed)";
+      if (EXACT_NOISE.has(lower) || customExact.has(lower)) return "(suppressed)";
       if (threshold !== "strict") {
         for (const pattern of SUBSTRING_NOISE) {
           if (pattern.test(trimmed)) return "(suppressed)";
@@ -14645,7 +14653,7 @@ async function plugin(bb) {
     }),
     async execute({ phrase }) {
       const lower = phrase.trim().toLowerCase();
-      if (EXACT_NOISE.has(lower)) return `"${phrase}" \u2192 known noise (exact match)`;
+      if (EXACT_NOISE.has(lower) || customExact.has(lower)) return `"${phrase}" \u2192 known noise (exact match)`;
       for (const pattern of SUBSTRING_NOISE) {
         if (pattern.test(phrase.trim())) return `"${phrase}" \u2192 known noise (pattern match)`;
       }
