@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-noisegate",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "engines": {
     "bb": ">=0.39",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Noisegate",
-    "description": "Noise gate — suppress low-signal acknowledgements from agents.",
+    "description": "Agent-invoked noise suppression \u2014 checks short acknowledgements and filler against known noise patterns.",
     "branding": {
       "icon": "Zap"
     },

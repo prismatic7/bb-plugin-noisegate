@@ -1,5 +1,10 @@
 // bb-plugin-noisegate — noise suppression for BB agent output.
 //
+// BB has no hook to intercept agent output, so this plugin adds two tools the
+// agent can voluntarily call on its own text: `noisegate_suppress` (check a
+// message before sending it) and `noisegate_watchword` (check a phrase).
+// It does not filter output automatically.
+//
 // Registers `noisegate_suppress` as a native agent tool that detects and
 // suppresses low-signal patterns in agent output — acknowledgements,
 // filler, boilerplate, repetitive confirmations.
@@ -94,19 +99,30 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  const { customNoise, threshold } = await settings.get();
+  let { customNoise, threshold } = await settings.get();
 
-  // Parse custom noise
-  const customExact = new Set<string>();
-  if (customNoise) {
-    for (const line of customNoise.split("\n")) {
-      const trimmed = line.trim().toLowerCase();
-      if (trimmed && !trimmed.startsWith("#")) {
-        EXACT_NOISE.add(trimmed);
-        customExact.add(trimmed);
+  // Custom noise is parsed into its own set (never mutates the shared
+  // EXACT_NOISE), so settings changes apply without a plugin reload.
+  let customExact = new Set<string>();
+  function parseCustomNoise(): void {
+    const next = new Set<string>();
+    if (customNoise) {
+      for (const line of customNoise.split("\n")) {
+        const trimmed = line.trim().toLowerCase();
+        if (trimmed && !trimmed.startsWith("#")) next.add(trimmed);
       }
     }
+    customExact = next;
   }
+  parseCustomNoise();
+
+  // Re-read settings on change without a plugin reload.
+  settings.onChange((next) => {
+    customNoise = next.customNoise;
+    threshold = next.threshold;
+    parseCustomNoise();
+    bb.log.info(`[noisegate] settings updated (threshold: ${threshold})`);
+  });
 
   // ── Agent tool: noisegate_suppress ─────────────────────────────────
 
@@ -127,8 +143,8 @@ export default async function plugin(bb: BbPluginApi) {
       const trimmed = text.trim();
       const lower = trimmed.toLowerCase();
 
-      // Check exact match
-      if (EXACT_NOISE.has(lower)) return "(suppressed)";
+      // Check exact match (built-in + custom phrases)
+      if (EXACT_NOISE.has(lower) || customExact.has(lower)) return "(suppressed)";
 
       // Check substring patterns (normal + permissive)
       if (threshold !== "strict") {
@@ -166,7 +182,7 @@ export default async function plugin(bb: BbPluginApi) {
     }),
     async execute({ phrase }) {
       const lower = phrase.trim().toLowerCase();
-      if (EXACT_NOISE.has(lower)) return `"${phrase}" → known noise (exact match)`;
+      if (EXACT_NOISE.has(lower) || customExact.has(lower)) return `"${phrase}" → known noise (exact match)`;
       for (const pattern of SUBSTRING_NOISE) {
         if (pattern.test(phrase.trim())) return `"${phrase}" → known noise (pattern match)`;
       }
